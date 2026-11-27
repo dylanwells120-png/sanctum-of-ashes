@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Atlas } from './atlas.js';
 import { buildArena } from './world.js';
 import { UnitView, FX, softTex } from './views.js';
-import { Sim, CLASSES, CLASS_IDS, ENEMIES, TICK, WAVES, HORDE } from './sim.js';
+import { Sim, CLASSES, CLASS_IDS, ENEMIES, TICK, WAVES, HORDE, DIFFS, DIFF_IDS, resolveDiff } from './sim.js';
 import { ARENAS, ARENA_IDS, hazardAt } from './arenaDefs.js';
 import { Net, probe } from './net.js';
 import { initFullscreen } from './fullscreen.js';
@@ -64,6 +64,34 @@ loadInfo.textContent = atlas.log.join(' · ') + ` · quality: ${settings.quality
 let chosenClass = localStorage.getItem('soa_class') || params.get('class') || 'templar';
 if (params.get('class')) chosenClass = params.get('class');
 let chosenArena = params.get('arena') || localStorage.getItem('soa_arena') || 'ossuary';
+const BEST_KEY = 'soa_best_v1';
+function getBests() {
+  let raw = {}; try { raw = JSON.parse(localStorage.getItem(BEST_KEY) || '{}'); } catch {}
+  const old = +(localStorage.getItem('soa_horde_best') || 0);
+  if (old && raw['horde:normal'] == null) raw['horde:normal'] = old;
+  return raw;
+}
+function recordBest(mode, diff, waves) {
+  const b = getBests(), k = `${mode}:${diff}`;
+  if (waves > (b[k] || 0)) { b[k] = waves; localStorage.setItem(BEST_KEY, JSON.stringify(b)); }
+  return Math.max(waves, b[k] || 0);
+}
+let chosenDiff = DIFFS[params.get('diff')] ? params.get('diff') : (DIFFS[localStorage.getItem('soa_diff')] ? localStorage.getItem('soa_diff') : 'normal');
+function setDiff(id, persist = true) {
+  if (!DIFFS[id]) id = 'normal';
+  chosenDiff = id;
+  if (persist) localStorage.setItem('soa_diff', id);
+  document.querySelectorAll('#diff button, #lobby-diff button').forEach(b => b.classList.toggle('sel', b.dataset.diff === id));
+  const D = DIFFS[id], bests = getBests();
+  const parts = [];
+  if (bests['horde:' + id] != null) parts.push(`Horde: ${bests['horde:' + id]} wave${bests['horde:' + id] === 1 ? '' : 's'}`);
+  if (bests['arena:' + id] != null) parts.push(`Arena: ${bests['arena:' + id]} wave${bests['arena:' + id] === 1 ? '' : 's'}`);
+  const note = $('#diff-note');
+  if (note) note.textContent = D.blurb + (parts.length ? '  ·  Best — ' + parts.join(' · ') : '');
+}
+document.querySelectorAll('#diff button').forEach(b => b.addEventListener('click', () => { setDiff(b.dataset.diff); if (net) net.send({ t: 'diff', diff: chosenDiff }); }));
+setDiff(chosenDiff, false);
+
 $('#name').value = params.get('name') || localStorage.getItem('soa_name') || '';
 const portrait = (unit, size = 150) => {
   const A = atlas.anim(unit, 'idle', 'S') || atlas.anim(unit, 'walk', 'S');
@@ -139,12 +167,12 @@ async function startGame(arena, mode, gm = 'arena') {
   G.world = buildArena(arena, atlas, scene, Q()); G.fx = new FX(atlas, scene);
   await setupPost(scene);
   G.scene = scene; G.sceneOld = scene; G.mode = mode; camInit = false;
-  if (mode === 'solo') { G.sim = new Sim(arena, { mode: G.gm }); G.myId = 'me'; G.sim.addPlayer('me', myName(), chosenClass); G.local = G.sim; }
+  if (mode === 'solo') { G.sim = new Sim(arena, { mode: G.gm, diff: chosenDiff }); G.myId = 'me'; G.sim.addPlayer('me', myName(), chosenClass); G.local = G.sim; }
   else { G.sim = null; G.myId = net.id; G.local = new Sim(arena); G.me = null; }
   buildSkillbar(); buildMinimap(arena);
   for (const s of ['#menu', '#lobby', '#end', '#pause']) $(s).classList.add('hidden');
   $('#hud').classList.remove('hidden'); if (isTouch) $('#touch').classList.remove('hidden');
-  toast(G.gm === 'horde' ? `Hell Horde \u2014 ${A.name}` : A.name);
+  toast((G.gm === 'horde' ? `Hell Horde \u2014 ${resolveDiff(chosenDiff).name} \u2014 ` : `${resolveDiff(chosenDiff).name} \u2014 `) + A.name);
 }
 function toMenu() {
   clearScene(); G.mode = 'menu'; G.state = null; $('#hud').classList.add('hidden'); $('#touch').classList.add('hidden');
@@ -228,9 +256,12 @@ function updateHUD(st, me, dt) {
   });
   const wl = $('#wave-label');
   const horde = st.mode === 'horde'; const hs = $('#horde-stats');
+  const D = resolveDiff(st.diff || chosenDiff);
+  const dh = $('#diff-hud');
+  if (dh) { dh.textContent = D.name; dh.className = 'diff-' + D.id; }
   if (horde) {
     wl.textContent = st.state === 'intro' ? 'Hell Horde \u2014 prepare yourself' : st.state === 'between' ? `Wave ${st.wave} cleared \u00b7 next in ${Math.ceil(st.stateT)}` : st.state === 'defeat' ? 'Consumed by the horde' : `Hell Horde \u00b7 Wave ${st.wave}`;
-    const html = `<span>Wave <b>${st.wave}</b></span><span>Enemies left <b>${st.state === 'fight' ? st.left : 0}</b></span><span>Kills <b>${st.kills}</b></span>${(st.wave + 1) % HORDE.bossEvery === 0 && st.state === 'between' ? '<span class="bosswarn">Archon next</span>' : ''}`;
+    const html = `<span>Wave <b>${st.wave}</b></span><span>Enemies left <b>${st.state === 'fight' ? st.left : 0}</b></span><span>Kills <b>${st.kills}</b></span>${(st.wave + 1) % (st.bossEvery || D.bossEvery) === 0 && st.state === 'between' ? '<span class="bosswarn">Archon next</span>' : ''}`;
     if (hs._h !== html) { hs._h = html; hs.innerHTML = html; }
   } else
   wl.textContent = st.state === 'intro' ? 'Prepare yourself' : st.state === 'between' ? `Wave ${st.wave} cleared` : st.state === 'fight' ? `Wave ${st.wave} / ${st.waves}` : st.state === 'victory' ? 'Victory' : st.state === 'defeat' ? 'Defeat' : '';
@@ -243,12 +274,15 @@ function updateHUD(st, me, dt) {
   drawMinimap(st);
   if ((st.state === 'victory' || st.state === 'defeat') && !G.ended) { G.ended = true; setTimeout(() => {
     if (G.mode === 'menu') return;
+    const D = resolveDiff(st.diff || chosenDiff);
     $('#end-title').textContent = st.state === 'victory' ? 'The Archon is vanquished' : st.mode === 'horde' ? 'The horde devours you' : 'The sanctum claims you';
+    const cleared = st.state === 'victory' ? (st.waves || 4) : Math.max(0, st.wave - 1);
+    const best = recordBest(st.mode === 'horde' ? 'horde' : 'arena', D.id, cleared);
     if (st.mode === 'horde') {
-      const survived = Math.max(0, st.wave - 1), best = Math.max(survived, +(localStorage.getItem('soa_horde_best') || 0)); localStorage.setItem('soa_horde_best', best);
-      $('#end-sub').textContent = `${ARENAS[G.arena].name} · reached wave ${st.wave} · ${st.kills} kills · best: ${best} waves survived${G.mode === 'coop' ? ' · returning to the lobby shortly' : ' · next run: ' + ARENAS[nextArena(G.arena)].name.replace('The ', '')}`;
+      $('#end-sub').textContent = `${ARENAS[G.arena].name} · ${D.name} · reached wave ${st.wave} · ${st.kills} kills · best: ${best} wave${best === 1 ? '' : 's'} survived${G.mode === 'coop' ? ' · returning to the lobby shortly' : ' · next run: ' + ARENAS[nextArena(G.arena)].name.replace('The ', '')}`;
     } else
-    $('#end-sub').textContent = `${ARENAS[G.arena].name} · waves survived: ${st.wave}${G.mode === 'coop' ? ' · returning to the lobby shortly' : ''}`;
+    $('#end-sub').textContent = `${ARENAS[G.arena].name} · ${D.name} · waves cleared: ${cleared} · best: ${best}${G.mode === 'coop' ? ' · returning to the lobby shortly' : ''}`;
+    setDiff(chosenDiff, false);
     $('#again').textContent = st.mode === 'horde' ? 'Next arena' : 'Play again';
     $('#again').classList.toggle('hidden', G.mode !== 'solo'); $('#end').classList.remove('hidden'); }, 1800); }
 }
@@ -471,6 +505,11 @@ function onNet(m) {
     const lm = $('#lobby-mode'); lm.innerHTML = `<h2>Mode ${host ? '(you pick)' : '(host picks)'}</h2><div class="row">${[['arena', 'Arena (4 waves + Archon)'], ['horde', 'Hell Horde (endless)']].map(([id, t]) => `<button data-mode="${id}" class="${(m.mode || 'arena') === id ? 'sel' : ''}" ${host ? '' : 'disabled'}>${t}</button>`).join('')}</div>`;
     if (host) lm.querySelectorAll('button').forEach(b => b.onclick = () => net.send({ t: 'mode', mode: b.dataset.mode }));
     if (host && params.get('mode') && !G._modeSent && m.state === 'lobby') { G._modeSent = true; if ((m.mode || 'arena') !== params.get('mode')) net.send({ t: 'mode', mode: params.get('mode') }); }
+    const ld = $('#lobby-diff'); const roomDiff = DIFFS[m.diff] ? m.diff : 'normal';
+    ld.innerHTML = `<h2>Difficulty ${host ? '(you pick)' : '(host picks)'}</h2><div class="seg" role="radiogroup" aria-label="Difficulty">${DIFF_IDS.map(id => `<button type="button" data-diff="${id}" class="${roomDiff === id ? 'sel' : ''}" ${host ? '' : 'disabled'}>${DIFFS[id].name}</button>`).join('')}</div>`;
+    if (host) ld.querySelectorAll('button').forEach(b => b.onclick = () => net.send({ t: 'diff', diff: b.dataset.diff }));
+    if (host && params.get('diff') && !G._diffSent && m.state === 'lobby') { G._diffSent = true; if (roomDiff !== params.get('diff') && DIFFS[params.get('diff')]) net.send({ t: 'diff', diff: params.get('diff') }); }
+    if (DIFFS[m.diff]) chosenDiff = m.diff;
     $('#start').classList.toggle('hidden', !host); $('#start').disabled = !m.players.filter(p => p.connected).every(p => p.ready);
     const me = m.players.find(p => p.id === net.id); $('#ready').textContent = me && me.ready ? 'Not ready' : 'Ready';
     if (m.state === 'lobby' && G.mode === 'coop') { clearScene(); G.mode = 'menu'; $('#hud').classList.add('hidden'); $('#touch').classList.add('hidden'); $('#end').classList.add('hidden'); $('#lobby').classList.remove('hidden'); }
@@ -478,6 +517,7 @@ function onNet(m) {
     const need = +params.get('autostart_players') || 0;
     if (host && need && m.state === 'lobby' && m.players.filter(p => p.connected && p.ready).length >= need) net.send({ t: 'start' });
   } else if (m.t === 'start') {
+    if (m.diff && DIFFS[m.diff]) chosenDiff = m.diff;
     if (G.mode !== 'coop' || G.arena !== m.arena || G.gm !== (m.mode || 'arena')) startGame(m.arena, 'coop', m.mode).then(() => { G.myId = net.id; });
   } else if (m.t === 'snap') {
     if (G.mode !== 'coop') return;

@@ -57,15 +57,30 @@ export const WAVES = [
 // ---------------------------------------------------------------- Hell Horde (endless survival)
 export const HORDE = { cap: 70, breather: 6, bossEvery: 5, maxPickups: 30, pickupLife: 18 };
 export const GAME_MODES = { arena: 'Arena', horde: 'Hell Horde' };
-// wave w composition + scaling (n = active players). Pure so it can be unit-tested.
-export function hordeWave(w, n = 1) {
+// Difficulty. "normal" is the original balance. Multipliers stack on top of wave scaling.
+export const DIFFS = {
+  easy:      { id: 'easy',      name: 'Easy',      hp: 0.65, dmg: 0.55, spd: 0.85, swarm: 0.70, gap: 1.40, eliteFrom: 5, eliteMul: 0.40, eliteCap: 0.15, drop: 1.80, healHorde: 0.30, healArena: 0.40, manaHorde: 0.45, bossEvery: 5, breather: 7,
+    blurb: 'Weaker, slower foes. More orbs. Generous breathers.' },
+  normal:    { id: 'normal',    name: 'Normal',    hp: 1.00, dmg: 1.00, spd: 1.00, swarm: 1.00, gap: 1.00, eliteFrom: 3, eliteMul: 1.00, eliteCap: 0.30, drop: 1.00, healHorde: 0.15, healArena: 0.25, manaHorde: 0.30, bossEvery: 5, breather: 6,
+    blurb: 'The pilgrim’s trial — the original balance.' },
+  hard:      { id: 'hard',      name: 'Hard',      hp: 1.35, dmg: 1.35, spd: 1.12, swarm: 1.25, gap: 0.75, eliteFrom: 2, eliteMul: 1.55, eliteCap: 0.45, drop: 0.70, healHorde: 0.08, healArena: 0.12, manaHorde: 0.20, bossEvery: 5, breather: 5,
+    blurb: 'Tougher, faster swarms. Scarcer orbs. Thin breathers.' },
+  nightmare: { id: 'nightmare', name: 'Nightmare', hp: 1.75, dmg: 1.65, spd: 1.22, swarm: 1.45, gap: 0.55, eliteFrom: 1, eliteMul: 2.00, eliteCap: 0.50, drop: 0.45, healHorde: 0.00, healArena: 0.00, manaHorde: 0.00, bossEvery: 3, breather: 4,
+    blurb: 'Elites from wave 1. An Archon every third wave. No breather heal.' },
+};
+export const DIFF_IDS = ['easy', 'normal', 'hard', 'nightmare'];
+export function resolveDiff(id) { return DIFFS[id] || DIFFS.normal; }
+// wave w composition + scaling (n = active players, d = difficulty id or table). Pure so it can be unit-tested.
+export function hordeWave(w, n = 1, d = 'normal') {
+  const D = typeof d === 'string' ? resolveDiff(d) : d;
   const co = 1 + 0.6 * (n - 1);
-  const boss = w % HORDE.bossEvery === 0;
-  const hpMul = 1 + 0.13 * (w - 1) + 0.004 * (w - 1) ** 2;
-  const spdMul = Math.min(1.5, 1 + 0.03 * (w - 1));
-  const dmgMul = 1 + 0.06 * (w - 1);
-  const eliteP = w < 3 ? 0 : Math.min(0.3, 0.035 * (w - 2));
-  const total = Math.round((14 + 5 * w) * co * (boss ? 0.55 : 1));
+  const bossEvery = D.bossEvery || HORDE.bossEvery;
+  const boss = w % bossEvery === 0;
+  const hpMul = (1 + 0.13 * (w - 1) + 0.004 * (w - 1) ** 2) * D.hp;
+  const spdMul = Math.min(1.5, 1 + 0.03 * (w - 1)) * D.spd;
+  const dmgMul = (1 + 0.06 * (w - 1)) * D.dmg;
+  const eliteP = w < D.eliteFrom ? 0 : Math.min(D.eliteCap, 0.035 * (w - D.eliteFrom + 1) * D.eliteMul);
+  const total = Math.round((14 + 5 * w) * co * (boss ? 0.55 : 1) * D.swarm);
   const ogres = Math.min(8, boss ? Math.floor(w / 10) : (w % 3 === 0 ? 1 + Math.floor(w / 4) : w >= 7 ? Math.floor(w / 7) : 0));
   const gargFrac = w < 2 ? 0 : Math.min(0.45, 0.12 + 0.03 * w);
   const list = [];
@@ -73,13 +88,13 @@ export function hordeWave(w, n = 1) {
   for (let i = 0; i < swarm; i++) list.push({ type: Math.random() < gargFrac ? 'gargoyle' : 'gravewalker', elite: Math.random() < eliteP });
   for (let i = 0; i < ogres; i++) list.push({ type: 'ogre', elite: w >= 12 && Math.random() < eliteP });
   list.sort(() => Math.random() - 0.5);
-  if (boss) list.unshift({ type: 'archon', boss: true, bossN: w / HORDE.bossEvery });
-  return { list, hpMul, spdMul, dmgMul, boss, gap: Math.max(0.12, 0.3 - w * 0.008) };
+  if (boss) list.unshift({ type: 'archon', boss: true, bossN: w / bossEvery });
+  return { list, hpMul, spdMul, dmgMul, boss, gap: Math.max(0.08, (0.3 - w * 0.008) * D.gap), eliteP, bossEvery };
 }
 
 export class Sim {
   constructor(arena = 'ossuary', opts = {}) {
-    this.mode = opts.mode === 'horde' ? 'horde' : 'arena'; this.pickups = new Map(); this.kills = 0; this.alive = 0; this._bCache = null;
+    this.mode = opts.mode === 'horde' ? 'horde' : 'arena'; this.diff = resolveDiff(opts.diff); this.pickups = new Map(); this.kills = 0; this.alive = 0; this._bCache = null;
     this.arena = arena; this.A = ARENAS[arena]; this.t = 0; this.nextId = 1;
     this.players = new Map(); this.enemies = new Map(); this.projs = new Map(); this.zones = new Map();
     this.nav = (this.A.nav || []).map(([x, z]) => ({ x, z }));
@@ -149,32 +164,44 @@ export class Sim {
     // cleanup dead enemies after death anim
     for (const [id, e] of this.enemies) if (e.dead && this.t - e.deadT > 1.2) this.enemies.delete(id);
     if (this.state === 'fight' && this.spawnQueue.length === 0 && ![...this.enemies.values()].some(e => !e.dead)) {
-      if (this.mode === 'horde') { this.state = 'between'; this.stateT = HORDE.breather;
+      if (this.mode === 'horde') { this.state = 'between'; this.stateT = this.diff.breather;
         this.ev({ e: 'msg', text: `Wave ${this.wave} cleared \u2014 the horde regroups` });
-        for (const p of this.players.values()) { if (p.downed) { p.downed = false; p.hp = p.maxHp * 0.4; this.setAnim(p, 'idle'); } p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.15); p.mana = Math.min(p.maxMana, p.mana + p.maxMana * 0.3); } }
+        this.breatherHeal(this.diff.healHorde, this.diff.manaHorde); }
       else if (this.wave >= WAVES.length) { this.state = 'victory'; this.ev({ e: 'msg', text: 'The Archon falls. Victory!' }); }
       else { this.state = 'between'; this.stateT = 4; this.ev({ e: 'msg', text: `Wave ${this.wave} cleared` });
-        for (const p of this.players.values()) { if (p.downed) { p.downed = false; p.hp = p.maxHp * 0.4; this.setAnim(p, 'idle'); } p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.25); } }
+        this.breatherHeal(this.diff.healArena, 0); }
     }
     const active = [...this.players.values()].filter(p => !p.away);
     if (this.state === 'fight' && active.length && active.every(p => p.downed)) { this.state = 'defeat'; this.ev({ e: 'msg', text: 'All pilgrims have fallen' }); }
+  }
+  breatherHeal(hpFrac, manaFrac) {
+    for (const p of this.players.values()) {
+      if (p.downed) { p.downed = false; p.hp = p.maxHp * 0.4; this.setAnim(p, 'idle'); }
+      if (hpFrac) p.hp = Math.min(p.maxHp, p.hp + p.maxHp * hpFrac);
+      if (manaFrac) p.mana = Math.min(p.maxMana, p.mana + p.maxMana * manaFrac);
+    }
   }
   nextWave() {
     if (this.mode === 'horde') return this.nextHordeWave();
     const W = WAVES[this.wave]; this.wave++; this.state = 'fight';
     const n = Math.max(1, [...this.players.values()].filter(p => !p.away).length);
-    const list = [];
-    for (const [type, count] of Object.entries(W)) { const c = ENEMIES[type].boss ? count : Math.round(count * (1 + 0.5 * (n - 1))); for (let i = 0; i < c; i++) list.push(type); }
+    const D = this.diff; const list = [];
+    const eliteP = this.wave < D.eliteFrom ? 0 : Math.min(D.eliteCap, 0.035 * (this.wave - D.eliteFrom + 1) * D.eliteMul);
+    for (const [type, count] of Object.entries(W)) {
+      const c = ENEMIES[type].boss ? count : Math.max(1, Math.round(count * (1 + 0.5 * (n - 1)) * D.swarm));
+      for (let i = 0; i < c; i++) list.push({ type, elite: !ENEMIES[type].boss && Math.random() < eliteP });
+    }
     list.sort(() => Math.random() - 0.5);
-    if (W.archon) { list.splice(list.indexOf('archon'), 1); list.unshift('archon'); }
-    this.spawnQueue = list.map((type, i) => ({ type, at: this.t + 0.5 + i * 0.55 }));
+    const ai = list.findIndex(s => s.type === 'archon'); if (ai > 0) { const a = list.splice(ai, 1)[0]; list.unshift(a); }
+    const gap = 0.55 * D.gap;
+    this.spawnQueue = list.map((s, i) => ({ ...s, at: this.t + 0.5 + i * gap }));
     this.ev({ e: 'wave', n: this.wave, boss: !!W.archon });
     this.ev({ e: 'msg', text: W.archon ? 'The Abyssal Archon descends!' : `Wave ${this.wave}` });
   }
   nextHordeWave() {
     this.wave++; this.state = 'fight';
     const n = Math.max(1, [...this.players.values()].filter(p => !p.away).length);
-    const W = hordeWave(this.wave, n); this.hordeMods = W;
+    const W = hordeWave(this.wave, n, this.diff); this.hordeMods = W;
     // bursts: packs of 5 pour in together from the edges, packs get closer together as waves climb
     let t = this.t + 0.6;
     this.spawnQueue = W.list.map((s, i) => { if (i && i % 5 === 0) t += W.gap * 6; else if (i) t += W.gap; return { ...s, at: t }; });
@@ -204,13 +231,15 @@ export class Sim {
       const jitter = () => (Math.random() - 0.5) * 2;
       const e = { id: this.id(), type, x: sp[0] + jitter(), z: sp[1] + jitter(), face: 0, hp, maxHp: hp, anim: 'walk', animT: this.t, cd: 1 + Math.random(),
         wind: 0, kx: 0, kz: 0, stun: 0, root: 0, bleed: 0, bleedT: 0, dead: false, special: 6, summon: 12, phase: 1, spdMul: 1, dmgMul: 1, elite: false, navT: Math.random() * 0.4 };
+      const D = this.diff;
       if (horde) {
-        const M = this.hordeMods || { hpMul: 1, spdMul: 1, dmgMul: 1 };
+        const M = this.hordeMods || { hpMul: D.hp, spdMul: D.spd, dmgMul: D.dmg };
         const edge = !T.boss && Math.random() < 0.7 ? this.edgeSpawn(T) : null; if (edge) { e.x = edge[0]; e.z = edge[1]; }
-        hp *= T.boss ? (1 + 0.6 * ((q.bossN || 1) - 1)) : M.hpMul; e.spdMul = T.boss ? 1 : M.spdMul; e.dmgMul = T.boss ? 1 + 0.15 * ((q.bossN || 1) - 1) : M.dmgMul;
-        if (q.elite) { e.elite = true; hp *= 2.6; e.dmgMul *= 1.35; e.spdMul *= 1.12; }
-        e.hp = e.maxHp = hp; this.alive++;
-      }
+        hp *= T.boss ? D.hp * (1 + 0.6 * ((q.bossN || 1) - 1)) : M.hpMul; e.spdMul = T.boss ? D.spd : M.spdMul; e.dmgMul = T.boss ? D.dmg * (1 + 0.15 * ((q.bossN || 1) - 1)) : M.dmgMul;
+        this.alive++;
+      } else { hp *= D.hp; e.spdMul = D.spd; e.dmgMul = D.dmg; }
+      if (q.elite) { e.elite = true; hp *= 2.6; e.dmgMul *= 1.35; e.spdMul *= 1.12; }
+      e.hp = e.maxHp = hp;
       if (this.blocked(e.x, e.z, T.r)) { e.x = sp[0]; e.z = sp[1]; }
       this.enemies.set(e.id, e); this.ev({ e: 'fx', k: 'shackle', x: e.x, z: e.z, s: T.boss ? 3 : e.elite ? 1.8 : 1.2, ground: 1, d: 0.8 });
     }
@@ -383,8 +412,9 @@ export class Sim {
     e.dead = true; e.deadT = this.t; e.hp = 0; this.setAnim(e, 'death'); if (src) src.kills = (src.kills || 0) + 1; this.kills++;
     this.ev({ e: 'die', id: e.id, type: e.type, x: e.x, z: e.z, el: e.elite ? 1 : 0 });
     if (this.mode === 'horde') {
-      if (ENEMIES[e.type].boss) { for (let i = 0; i < 6; i++) this.dropPickup(i % 2 ? 'soul' : 'health', e.x, e.z); }
-      else { const ch = e.type === 'ogre' ? 0.75 : (e.elite ? 0.4 : e.type === 'gargoyle' ? 0.08 : 0.06);
+      const drop = this.diff.drop;
+      if (ENEMIES[e.type].boss) { const n = Math.max(2, Math.round(6 * drop)); for (let i = 0; i < n; i++) this.dropPickup(i % 2 ? 'soul' : 'health', e.x, e.z); }
+      else { const ch = Math.min(1, (e.type === 'ogre' ? 0.75 : (e.elite ? 0.4 : e.type === 'gargoyle' ? 0.08 : 0.06)) * drop);
         if (Math.random() < ch) this.dropPickup(Math.random() < 0.55 ? 'health' : 'soul', e.x, e.z); }
     }
     if (ENEMIES[e.type].boss) { this.spawnQueue = []; for (const o of this.enemies.values()) if (!o.dead) { o.dead = true; o.deadT = this.t; this.setAnim(o, 'death'); } }
@@ -462,7 +492,8 @@ export class Sim {
   snapshot() {
     const r = v => Math.round(v * 100) / 100;
     return {
-      t: r(this.t), arena: this.arena, mode: this.mode, wave: this.wave, waves: this.mode === 'horde' ? 0 : WAVES.length, state: this.state, stateT: r(this.stateT),
+      t: r(this.t), arena: this.arena, mode: this.mode, diff: this.diff.id, diffName: this.diff.name, bossEvery: this.diff.bossEvery,
+      wave: this.wave, waves: this.mode === 'horde' ? 0 : WAVES.length, state: this.state, stateT: r(this.stateT),
       kills: this.kills, left: this.spawnQueue.length + [...this.enemies.values()].filter(e => !e.dead).length,
       players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, cls: p.cls, x: r(p.x), z: r(p.z), f: r(p.face), a: p.anim, at: r(p.animT),
         hp: Math.round(p.hp), mhp: p.maxHp, mp: Math.round(p.mana), mmp: p.maxMana, cds: p.cds.map(r), dn: p.downed ? 1 : 0, rv: r(p.revive), b: Object.keys(p.buffs), away: p.away ? 1 : 0, k: p.kills })),
