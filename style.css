@@ -124,3 +124,17 @@ body.touch #orb-hp { order:0; } body.touch #orb-mp { order:1; margin-right:250px
   #pause-btn { top:calc(110px + var(--safe-t)) !important; }
 }
 @media (max-height:500px) and (orientation:landscape) { h1 { font-size:26px !important; margin:2px 0 !important; } .panel h2, h2 { font-size:13px; margin:6px 0 4px; } }
+
+/* ---- full screen / PWA standalone ---- */
+html, body { width:100%; height:100%; height:100dvh; max-height:100dvh; }
+#c { width:100%; height:100%; height:100dvh; touch-action:none; }
+#fs-hint { z-index:40; background:#05060acc; align-items:center; }
+
+.fs-hint-text { font-family: Georgia, "Times New Roman", serif; font-size:17px; line-height:1.45; color:#efe6d2; text-transform:none; letter-spacing:0; font-style:normal; }
+#fs-btn-hud { position:absolute; top:calc(220px + var(--safe-t)); right:calc(14px + var(--safe-r)); width:44px; height:44px; padding:0; font-size:18px; line-height:1; }
+@media (max-width:760px) { #fs-btn-hud { top:calc(180px + var(--safe-t)); } }
+@media (max-height:500px) and (orientation:landscape) { #fs-btn-hud { top:calc(150px + var(--safe-t)) !important; } }
+@media (orientation:portrait) and (max-width:500px) { #fs-btn-hud { top:calc(160px + var(--safe-t)) !important; } }
+@media (orientation:portrait) and (max-width:1100px) { #fs-btn-hud { top:calc(180px + var(--safe-t)); } }
+body.standalone .fs-btn { display:none !important; }
+#stick-zone { left:var(--safe-l); bottom:var(--safe-b); }

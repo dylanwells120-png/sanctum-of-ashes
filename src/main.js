@@ -6,12 +6,14 @@ import { UnitView, FX } from './views.js';
 import { Sim, CLASSES, CLASS_IDS, ENEMIES, TICK, WAVES } from './sim.js';
 import { ARENAS, ARENA_IDS, hazardAt } from './arenaDefs.js';
 import { Net, probe } from './net.js';
+import { initFullscreen } from './fullscreen.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isTouch = params.has('touch') ? params.get('touch') !== '0' : (matchMedia('(pointer: coarse)').matches || isIOS);
 if (isTouch) document.body.classList.add('touch');
+initFullscreen();
 
 // ------------------------------------------------------------------ settings
 const SKEY = 'soa_settings_v1';

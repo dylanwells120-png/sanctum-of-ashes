@@ -7,6 +7,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b0f14">
+<meta name="apple-mobile-web-app-title" content="Sanctum of Ashes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/icons/icon-180.png">
 <title>Sanctum of Ashes</title>
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
@@ -28,6 +31,7 @@
   </div>
   <div id="downed" class="hidden">You are down — a teammate can revive you by standing close.<div id="revive-bar"><div></div></div></div>
   <button id="pause-btn" aria-label="Menu">☰</button>
+  <button id="fs-btn-hud" class="fs-btn" type="button" aria-label="Full screen">⛶</button>
   <div id="netstatus" class="hidden"></div>
 </div>
 
@@ -48,6 +52,7 @@
     <div id="arenas" class="cards arenas"></div>
     <div class="row">
       <button id="solo" class="big">Play Solo</button>
+      <button id="fs-btn-menu" class="fs-btn" type="button">Full screen</button>
       <button id="settings-btn">Settings</button>
     </div>
     <p id="loadinfo" class="note"></p>
@@ -70,7 +75,7 @@
   <div class="panel narrow">
     <h2>Paused</h2>
     <div id="settings"></div>
-    <div class="row"><button id="resume" class="big">Resume</button><button id="quit">Leave arena</button></div>
+    <div class="row"><button id="resume" class="big">Resume</button><button id="fs-btn-pause" class="fs-btn" type="button">Full screen</button><button id="quit">Leave arena</button></div>
     <div class="controls">
       <b>Desktop</b>: WASD move · mouse aim · Left click / J = basic · Right click / 1 = ability · 2 = ability · R / 3 = ultimate · Esc = menu<br>
       <b>Touch</b>: left thumb = move stick · right buttons = attack / abilities (auto-aim at the nearest enemy)
@@ -79,6 +84,15 @@
 </div>
 
 <div id="end" class="screen hidden"><div class="panel narrow"><h2 id="end-title"></h2><p id="end-sub" class="note"></p><div class="row"><button id="again" class="big">Play again</button><button id="end-menu">Main menu</button></div></div></div>
+
+
+<div id="fs-hint" class="screen hidden" role="dialog" aria-modal="true" aria-labelledby="fs-hint-title">
+  <div class="panel narrow">
+    <h2 id="fs-hint-title">Full screen</h2>
+    <p class="fs-hint-text note">Tap Share, then Add to Home Screen, then open Sanctum of Ashes from your Home Screen for full screen.</p>
+    <div class="row"><button id="fs-hint-close" class="big">Got it</button></div>
+  </div>
+</div>
 
 <script type="module" src="src/main.js"></script>
 </body>
