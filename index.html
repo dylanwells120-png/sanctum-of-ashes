@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0f14">
+<title>Sanctum of Ashes</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/lib/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="party"></div>
+  <div id="wave"><div id="wave-label"></div><div id="boss" class="hidden"><div id="boss-name">The Abyssal Archon</div><div id="boss-bar"><div id="boss-fill"></div></div></div></div>
+  <div id="minimap-wrap"><canvas id="minimap" width="180" height="180"></canvas><div id="mm-n">N</div></div>
+  <div id="toasts"></div>
+  <div id="bottom">
+    <div class="orb" id="orb-hp"><div class="orb-fill"></div><div class="orb-frame"></div><div class="orb-text"></div></div>
+    <div id="skillbar"></div>
+    <div class="orb" id="orb-mp"><div class="orb-fill"></div><div class="orb-frame"></div><div class="orb-text"></div></div>
+  </div>
+  <div id="downed" class="hidden">You are down — a teammate can revive you by standing close.<div id="revive-bar"><div></div></div></div>
+  <button id="pause-btn" aria-label="Menu">☰</button>
+  <div id="netstatus" class="hidden"></div>
+</div>
+
+<div id="touch" class="hidden">
+  <div id="stick-zone"><div id="stick-base"><div id="stick-knob"></div></div></div>
+  <div id="tbuttons"></div>
+</div>
+<div id="dmg-layer"></div>
+
+<div id="menu" class="screen">
+  <div class="panel">
+    <h1>Sanctum <span>of</span> Ashes</h1>
+    <p class="tag">A gothic action-RPG arena prototype · three.js</p>
+    <label class="name">Name <input id="name" maxlength="16" placeholder="Pilgrim" autocomplete="off"></label>
+    <h2>Choose your class</h2>
+    <div id="classes" class="cards"></div>
+    <h2>Choose the arena</h2>
+    <div id="arenas" class="cards arenas"></div>
+    <div class="row">
+      <button id="solo" class="big">Play Solo</button>
+      <button id="settings-btn">Settings</button>
+    </div>
+    <p id="loadinfo" class="note"></p>
+  </div>
+</div>
+
+<div id="lobby" class="screen hidden">
+  <div class="panel narrow">
+    <h2>Co-op lobby</h2>
+    <p class="note" id="lobby-url"></p>
+    <ul id="lobby-players"></ul>
+    <div id="lobby-arena"></div>
+    <div class="row"><button id="ready" class="big">Ready</button><button id="start" class="big alt">Start</button><button id="lobby-leave">Leave</button></div>
+    <p class="note" id="lobby-hint">Everyone picks a class on the main card list, then presses Ready. The host chooses the arena and starts.</p>
+    <h2>Class</h2><div id="lobby-classes" class="cards small"></div>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="panel narrow">
+    <h2>Paused</h2>
+    <div id="settings"></div>
+    <div class="row"><button id="resume" class="big">Resume</button><button id="quit">Leave arena</button></div>
+    <div class="controls">
+      <b>Desktop</b>: WASD move · mouse aim · Left click / J = basic · Right click / 1 = ability · 2 = ability · R / 3 = ultimate · Esc = menu<br>
+      <b>Touch</b>: left thumb = move stick · right buttons = attack / abilities (auto-aim at the nearest enemy)
+    </div>
+  </div>
+</div>
+
+<div id="end" class="screen hidden"><div class="panel narrow"><h2 id="end-title"></h2><p id="end-sub" class="note"></p><div class="row"><button id="again" class="big">Play again</button><button id="end-menu">Main menu</button></div></div></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
