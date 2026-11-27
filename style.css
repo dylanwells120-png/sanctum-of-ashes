@@ -153,3 +153,19 @@ body.horde #wave-label { color:#ffcfa0; text-shadow:0 0 8px #ff3a00, 0 2px 4px #
 .dmg.m { color:#7ff6ea; }
 #lobby-mode button.sel { border-color:#ffb347; box-shadow:0 0 10px rgba(255,140,0,.5); }
 @media (max-width: 700px) { #horde-stats { font-size:11px; gap:9px; } #horde-stats b { font-size:13px; } }
+
+/* ---------------- Difficulty */
+.seg { display:flex; width:100%; max-width:640px; margin:0 auto 4px; border:1px solid #5a3a28; border-radius:8px; overflow:hidden; background:#12080a; }
+.seg button { flex:1; min-height:44px; padding:8px 6px; border:0; border-right:1px solid #5a3a28; border-radius:0; background:transparent; color:#cbb89a; letter-spacing:.1em; text-transform:uppercase; font-size:13px; }
+.seg button:last-child { border-right:0; }
+.seg button.sel { background:linear-gradient(#5a0d10,#2a0204); color:#ffe2c0; }
+.seg button[data-diff="easy"].sel { background:linear-gradient(#1a3a28,#0a1a12); color:#d4f0d8; }
+.seg button[data-diff="hard"].sel { background:linear-gradient(#5a2a08,#2a1202); color:#ffd9a0; }
+.seg button[data-diff="nightmare"].sel { background:linear-gradient(#4a0610,#1a0206); color:#ffb0b0; box-shadow:inset 0 0 14px rgba(255,0,40,.35); }
+#diff-note { margin-top:2px; margin-bottom:10px; }
+#diff-hud { font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:#cbb89a; text-shadow:0 1px 3px #000; margin-top:2px; }
+#diff-hud.diff-easy { color:#8fca9a; }
+#diff-hud.diff-hard { color:#ffb347; }
+#diff-hud.diff-nightmare { color:#ff6a6a; text-shadow:0 0 8px #ff2040, 0 1px 3px #000; }
+#lobby-diff { margin:8px 0 12px; }
+@media (max-width:700px) { .seg button { font-size:11px; letter-spacing:.06em; min-height:42px; } }
