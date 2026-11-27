@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Atlas, placeholderUnit } from './atlas.js';
 import { softTex } from './world.js';
+export { softTex };
 import { CLASSES, ENEMIES } from './sim.js';
 
 const DEF_FPS = { idle: 5, walk: 8, attack: 12, hit: 10, death: 8 };
@@ -10,7 +11,7 @@ const SECT = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
 export function dirFromFacing(f) { let a = f; const k = Math.round(a / (Math.PI / 4)); return SECT[((k % 8) + 8) % 8]; }
 
 export class UnitView {
-  constructor(atlas, scene, unit, height, isPlayer) {
+  constructor(atlas, scene, unit, height, isPlayer, opts = {}) {
     this.atlas = atlas; this.unit = unit; this.height = height; this.scene = scene; this.isPlayer = isPlayer;
     const U = atlas.units[unit];
     this.fill = U ? (U.fill || 0.85) : 0.85;
@@ -18,8 +19,9 @@ export class UnitView {
     this.tex = tex; this.hasAtlas = !!U; this.fps = (U && U.fps) || DEF_FPS;
     this.mat = new THREE.SpriteMaterial({ map: tex, alphaTest: 0.3, fog: true });
     this.sprite = new THREE.Sprite(this.mat); this.sprite.center.set(0.5, 0.05); scene.add(this.sprite);
-    const sh = new THREE.Mesh(new THREE.CircleGeometry(height * 0.22, 20), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false, map: softTex() }));
-    sh.rotation.x = -Math.PI / 2; scene.add(sh); this.shadow = sh;
+    // enemies can share one instanced shadow batch (opts.noShadow) to save a draw call per unit
+    const sh = opts.noShadow ? new THREE.Object3D() : new THREE.Mesh(new THREE.CircleGeometry(height * 0.22, 20), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false, map: softTex() }));
+    sh.rotation.x = -Math.PI / 2; if (!opts.noShadow) scene.add(sh); this.shadow = sh;
     this.flash = 0; this.lastHp = null; this.cur = null;
     if (!isPlayer) { // enemy hp bar
       const mk = c => new THREE.Sprite(new THREE.SpriteMaterial({ color: c, depthTest: false, transparent: true, opacity: 0.9 }));
@@ -31,6 +33,8 @@ export class UnitView {
       ring.rotation.x = -Math.PI / 2; scene.add(ring); this.ring = ring;
     }
   }
+  hide() { for (const o of [this.sprite, this.shadow, this.hpBg, this.hpFg]) if (o) o.visible = false; }
+  reuse() { this.sprite.visible = this.shadow.visible = true; this.lastHp = null; this.flash = 0; }
   setColorRing(c) { if (this.ring) this.ring.material.color.set(c); }
   update(st, simT, dt, y = 0, extra = {}) {
     const anim = st.a || 'idle'; const dir = anim === 'death' ? 'S' : dirFromFacing(st.f);
@@ -44,7 +48,7 @@ export class UnitView {
         else if (LOOP[anim]) i %= A.frames.length; else i = Math.min(i, A.frames.length - 1);
         i = Math.max(0, i || 0); fl = A.frames[i] || A.frames[0]; Atlas.applyUV(this.tex, fl, A.mirror);
         const pv = fl.pivot || { y: 0.95 }; this.sprite.center.set(0.5, 1 - pv.y);
-        const aspect = fl.rect.w / fl.rect.h, h = this.height / this.fill; this.sprite.scale.set(h * aspect, h, 1);
+        const aspect = fl.rect.w / fl.rect.h, h = this.height * (extra.elite ? 1.22 : 1) / this.fill; this.sprite.scale.set(h * aspect, h, 1);
       }
     } else { const h = this.height; this.sprite.scale.set(h * 0.5, h, 1); }
     const fly = extra.fly ? extra.fly + Math.sin(simT * 3 + (st.id || 0)) * 0.25 : 0;
@@ -52,13 +56,14 @@ export class UnitView {
     this.shadow.scale.setScalar(fly ? 0.7 : 1);
     if (this.lastHp !== null && st.hp < this.lastHp - 0.5) this.flash = 0.18; this.lastHp = st.hp; this.flash = Math.max(0, this.flash - dt);
     const c = this.mat.color;
-    if (this.flash > 0) c.setRGB(1.8, 0.6, 0.6); else if (extra.stun) c.setRGB(1.0, 1.0, 1.6); else if (extra.invis) c.setRGB(0.5, 0.45, 0.7); else c.setRGB(1, 1, 1);
+    if (this.flash > 0) c.setRGB(1.8, 0.6, 0.6); else if (extra.stun) c.setRGB(1.0, 1.0, 1.6); else if (extra.invis) c.setRGB(0.5, 0.45, 0.7); else if (extra.elite) c.setRGB(1.75, 0.62, 0.38); else c.setRGB(1, 1, 1);
     this.mat.opacity = extra.invis ? 0.45 : extra.away ? 0.25 : 1; this.mat.transparent = this.mat.opacity < 1;
     if (this.hpBg) {
       const show = st.hp < st.mhp && anim !== 'death'; this.hpBg.visible = this.hpFg.visible = show;
       if (show) { const w = Math.min(4, 0.6 + this.height * 0.45), top = y + fly + this.height * 1.08 + 0.25;
         this.hpBg.position.set(st.x - w / 2, top, st.z); this.hpBg.scale.set(w, 0.13, 1);
-        this.hpFg.position.set(st.x - w / 2, top, st.z + 0.001); this.hpFg.scale.set(Math.max(0.001, w * st.hp / st.mhp), 0.11, 1); }
+        this.hpFg.position.set(st.x - w / 2, top, st.z + 0.001); this.hpFg.scale.set(Math.max(0.001, w * st.hp / st.mhp), 0.11, 1);
+        this.hpFg.material.color.set(extra.elite ? 0xff9a1a : 0xb3121e); }
     }
     if (this.ring) { this.ring.position.set(st.x, y + 0.04, st.z); this.ring.visible = !extra.downed; }
     if (anim === 'death' && !this.isPlayer) { const k = Math.max(0, 1 - Math.max(0, age - 0.7) / 0.5); this.mat.opacity = k; this.mat.transparent = true; }

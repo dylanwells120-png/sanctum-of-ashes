@@ -2,8 +2,8 @@
 import * as THREE from 'three';
 import { Atlas } from './atlas.js';
 import { buildArena } from './world.js';
-import { UnitView, FX } from './views.js';
-import { Sim, CLASSES, CLASS_IDS, ENEMIES, TICK, WAVES } from './sim.js';
+import { UnitView, FX, softTex } from './views.js';
+import { Sim, CLASSES, CLASS_IDS, ENEMIES, TICK, WAVES, HORDE } from './sim.js';
 import { ARENAS, ARENA_IDS, hazardAt } from './arenaDefs.js';
 import { Net, probe } from './net.js';
 import { initFullscreen } from './fullscreen.js';
@@ -116,40 +116,45 @@ let settingsFromMenu = false;
 $('#settings-btn').onclick = () => { settingsFromMenu = true; $('#pause h2').textContent = 'Settings'; $('#resume').textContent = 'Close'; $('#quit').classList.add('hidden'); $('#pause').classList.remove('hidden'); };
 
 // ------------------------------------------------------------------ game state
-const G = { mode: 'menu', scene: null, world: null, fx: null, sim: null, arena: null, myId: null, views: new Map(), paused: false,
+const G = { gm: 'arena', mode: 'menu', scene: null, world: null, fx: null, sim: null, arena: null, myId: null, views: new Map(), paused: false,
   snaps: [], state: null, simT: 0, acc: 0, me: null, lastSend: 0, ended: false, lobby: null, bigErrT: 0 };
 let net = null;
-window.__soa = { G, atlas, settings, get state() { return G.state; }, get net() { return net; } };
+window.__soa = { G, atlas, settings, renderer, get state() { return G.state; }, get net() { return net; } };
 
 function clearScene() {
   for (const v of G.views.values()) v.dispose(); G.views.clear();
   if (G.fx) G.fx.clear(); if (G.world) G.world.dispose();
   G.scene = null; G.world = null; G.fx = null; composer = null;
+  for (const list of Object.values(viewPool)) for (const v of list) v.dispose(); for (const k in viewPool) delete viewPool[k];
+  for (const v of pickupViews.values()) G.sceneOld?.remove(v.sp); pickupViews.clear();
 }
 function rebuildWorld() {
   if (!G.scene) return; G.world.dispose(); G.world = buildArena(G.arena, atlas, G.scene, Q()); setupPost(G.scene);
   G.scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });
 }
-async function startGame(arena, mode) {
-  clearScene(); G.mode = 'loading'; G.arena = arena; G.ended = false; G.paused = false; G.snaps = []; G.acc = 0; G.bigErrT = 0;
+async function startGame(arena, mode, gm = 'arena') {
+  clearScene(); G.mode = 'loading'; G.arena = arena; G.gm = gm === 'horde' ? 'horde' : 'arena'; document.body.classList.toggle('horde', G.gm === 'horde'); G.ended = false; G.paused = false; G.snaps = []; G.acc = 0; G.bigErrT = 0;
   const A = ARENAS[arena]; const scene = new THREE.Scene();
   scene.background = new THREE.Color(A.fog); scene.fog = new THREE.FogExp2(A.fog, A.fogDensity * (settings.fog ? 1 : 0.3));
   G.world = buildArena(arena, atlas, scene, Q()); G.fx = new FX(atlas, scene);
   await setupPost(scene);
-  G.scene = scene; G.mode = mode; camInit = false;
-  if (mode === 'solo') { G.sim = new Sim(arena); G.myId = 'me'; G.sim.addPlayer('me', myName(), chosenClass); G.local = G.sim; }
+  G.scene = scene; G.sceneOld = scene; G.mode = mode; camInit = false;
+  if (mode === 'solo') { G.sim = new Sim(arena, { mode: G.gm }); G.myId = 'me'; G.sim.addPlayer('me', myName(), chosenClass); G.local = G.sim; }
   else { G.sim = null; G.myId = net.id; G.local = new Sim(arena); G.me = null; }
   buildSkillbar(); buildMinimap(arena);
   for (const s of ['#menu', '#lobby', '#end', '#pause']) $(s).classList.add('hidden');
   $('#hud').classList.remove('hidden'); if (isTouch) $('#touch').classList.remove('hidden');
-  toast(A.name);
+  toast(G.gm === 'horde' ? `Hell Horde \u2014 ${A.name}` : A.name);
 }
 function toMenu() {
   clearScene(); G.mode = 'menu'; G.state = null; $('#hud').classList.add('hidden'); $('#touch').classList.add('hidden');
   for (const s of ['#lobby', '#end', '#pause']) $(s).classList.add('hidden'); $('#menu').classList.remove('hidden');
 }
 $('#solo').onclick = () => { localStorage.setItem('soa_name', $('#name').value.trim()); startGame(chosenArena, 'solo'); };
-$('#again').onclick = () => { if (G.mode === 'solo') startGame(G.arena, 'solo'); else { $('#end').classList.add('hidden'); } };
+$('#horde').onclick = () => { localStorage.setItem('soa_name', $('#name').value.trim()); startGame(chosenArena, 'solo', 'horde'); };
+// Hell Horde cycles the arena on every new run
+const nextArena = id => ARENA_IDS[(ARENA_IDS.indexOf(id) + 1) % ARENA_IDS.length];
+$('#again').onclick = () => { if (G.mode === 'solo' && G.gm === 'horde') { const a = nextArena(G.arena); pickArena(a); startGame(a, 'solo', 'horde'); } else if (G.mode === 'solo') startGame(G.arena, 'solo'); else { $('#end').classList.add('hidden'); } };
 $('#end-menu').onclick = () => { if (net) { net.close(); net = null; } toMenu(); };
 $('#pause-btn').onclick = () => openPause();
 $('#resume').onclick = () => { $('#pause').classList.add('hidden'); G.paused = false; if (settingsFromMenu) { settingsFromMenu = false; } };
@@ -189,7 +194,7 @@ const tmpV = new THREE.Vector3();
 function damageNumber(e) {
   const layer = $('#dmg-layer'); if (layer.childElementCount > 40) return;
   tmpV.set(e.x, (e.h || 2) * 1.05, e.z).project(camera); if (tmpV.z > 1) return;
-  const d = document.createElement('div'); d.className = 'dmg' + (e.tgt === 'p' ? ' p' : ''); d.textContent = e.v;
+  const d = document.createElement('div'); d.className = 'dmg' + (e.tgt === 'p' ? ' p' : e.tgt === 'h' ? ' h' : e.tgt === 'm' ? ' m' : ''); d.textContent = e.v;
   d.style.left = ((tmpV.x * 0.5 + 0.5) * innerWidth + (Math.random() - 0.5) * 24) + 'px'; d.style.top = ((-tmpV.y * 0.5 + 0.5) * innerHeight) + 'px';
   layer.appendChild(d); setTimeout(() => d.remove(), 900);
 }
@@ -207,7 +212,8 @@ function drawMinimap(st) {
   const cv = $('#minimap'), g = cv.getContext('2d'), W = cv.width; if (!mmBase) return;
   g.clearRect(0, 0, W, W); g.imageSmoothingEnabled = true; g.drawImage(mmBase.c, 0, 0, W, W);
   const P = (x, z) => [(x / mmBase.R * 0.5 + 0.5) * W, (z / mmBase.R * 0.5 + 0.5) * W];
-  for (const e of st.enemies) { if (e.a === 'death') continue; const [x, y] = P(e.x, e.z); g.fillStyle = e.ty === 'archon' ? '#ff6a00' : '#e63946'; g.beginPath(); g.arc(x, y, e.ty === 'archon' ? 6 : e.ty === 'ogre' ? 4 : 2.6, 0, 7); g.fill(); }
+  for (const e of st.enemies) { if (e.a === 'death') continue; const [x, y] = P(e.x, e.z); g.fillStyle = e.ty === 'archon' ? '#ff6a00' : e.el ? '#ffb347' : '#e63946'; g.beginPath(); g.arc(x, y, e.ty === 'archon' ? 6 : e.ty === 'ogre' ? 4 : 2.6, 0, 7); g.fill(); }
+  if (st.pickups) for (const q of st.pickups) { const [x, y] = P(q.x, q.z); g.fillStyle = q.k === 'health' ? '#ff3b4a' : '#5ff0e0'; g.fillRect(x - 2, y - 2, 4, 4); }
   for (const p of st.players) { const [x, y] = P(p.x, p.z); g.fillStyle = p.id === G.myId ? '#ffd36a' : '#38b2ac'; g.beginPath(); g.arc(x, y, 4.5, 0, 7); g.fill(); g.strokeStyle = '#000'; g.stroke(); }
 }
 const fpsEl = document.createElement('div'); Object.assign(fpsEl.style, { position: 'fixed', left: '8px', bottom: '8px', fontSize: '12px', zIndex: 30, fontFamily: 'monospace', color: '#9f9' }); document.body.appendChild(fpsEl);
@@ -221,8 +227,15 @@ function updateHUD(st, me, dt) {
     if (slotEls[i]) slotEls[i].querySelector('.cdt').textContent = cd > 0.6 ? Math.ceil(cd) : '';
   });
   const wl = $('#wave-label');
+  const horde = st.mode === 'horde'; const hs = $('#horde-stats');
+  if (horde) {
+    wl.textContent = st.state === 'intro' ? 'Hell Horde \u2014 prepare yourself' : st.state === 'between' ? `Wave ${st.wave} cleared \u00b7 next in ${Math.ceil(st.stateT)}` : st.state === 'defeat' ? 'Consumed by the horde' : `Hell Horde \u00b7 Wave ${st.wave}`;
+    const html = `<span>Wave <b>${st.wave}</b></span><span>Enemies left <b>${st.state === 'fight' ? st.left : 0}</b></span><span>Kills <b>${st.kills}</b></span>${(st.wave + 1) % HORDE.bossEvery === 0 && st.state === 'between' ? '<span class="bosswarn">Archon next</span>' : ''}`;
+    if (hs._h !== html) { hs._h = html; hs.innerHTML = html; }
+  } else
   wl.textContent = st.state === 'intro' ? 'Prepare yourself' : st.state === 'between' ? `Wave ${st.wave} cleared` : st.state === 'fight' ? `Wave ${st.wave} / ${st.waves}` : st.state === 'victory' ? 'Victory' : st.state === 'defeat' ? 'Defeat' : '';
-  const boss = st.enemies.find(e => e.ty === 'archon');
+  hs.classList.toggle('hidden', !horde);
+  const boss = st.enemies.find(e => e.ty === 'archon' && e.a !== 'death');
   $('#boss').classList.toggle('hidden', !boss); if (boss) { $('#boss-fill').style.width = (boss.hp / boss.mhp * 100) + '%'; $('#boss-name').textContent = 'The Abyssal Archon' + (boss.ph === 2 ? ' — Phase II' : ''); }
   const party = $('#party'); const multi = st.players.length > 1;
   party.innerHTML = multi ? st.players.map(p => `<div class="pf ${p.id === G.myId ? 'me' : ''} ${p.dn ? 'down' : ''}">${escapeHTML(p.name)} · ${CLASSES[p.cls].name.split(' ').pop()}${p.dn ? ' — DOWN' : p.away ? ' — reconnecting' : ''}<div class="bar"><div style="width:${p.hp / p.mhp * 100}%"></div></div></div>`).join('') : '';
@@ -230,8 +243,13 @@ function updateHUD(st, me, dt) {
   drawMinimap(st);
   if ((st.state === 'victory' || st.state === 'defeat') && !G.ended) { G.ended = true; setTimeout(() => {
     if (G.mode === 'menu') return;
-    $('#end-title').textContent = st.state === 'victory' ? 'The Archon is vanquished' : 'The sanctum claims you';
+    $('#end-title').textContent = st.state === 'victory' ? 'The Archon is vanquished' : st.mode === 'horde' ? 'The horde devours you' : 'The sanctum claims you';
+    if (st.mode === 'horde') {
+      const survived = Math.max(0, st.wave - 1), best = Math.max(survived, +(localStorage.getItem('soa_horde_best') || 0)); localStorage.setItem('soa_horde_best', best);
+      $('#end-sub').textContent = `${ARENAS[G.arena].name} · reached wave ${st.wave} · ${st.kills} kills · best: ${best} waves survived${G.mode === 'coop' ? ' · returning to the lobby shortly' : ' · next run: ' + ARENAS[nextArena(G.arena)].name.replace('The ', '')}`;
+    } else
     $('#end-sub').textContent = `${ARENAS[G.arena].name} · waves survived: ${st.wave}${G.mode === 'coop' ? ' · returning to the lobby shortly' : ''}`;
+    $('#again').textContent = st.mode === 'horde' ? 'Next arena' : 'Play again';
     $('#again').classList.toggle('hidden', G.mode !== 'solo'); $('#end').classList.remove('hidden'); }, 1800); }
 }
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -300,7 +318,8 @@ function handleEvents(evs) {
     if (e.e === 'fx') G.fx.spawn(e);
     else if (e.e === 'dmg') damageNumber(e);
     else if (e.e === 'msg') toast(e.text);
-    else if (e.e === 'die') G.fx.spawn({ k: 'ash', x: e.x, z: e.z, s: e.type === 'archon' ? 8 : 3, d: 0.6 });
+    else if (e.e === 'die') { if (G.fx.live.length < 60 || e.type !== 'gravewalker') G.fx.spawn({ k: 'ash', x: e.x, z: e.z, s: e.type === 'archon' ? 8 : e.el ? 4.5 : 3, d: 0.6 }); }
+    else if (e.e === 'wave' && e.boss) { const b = $('#wave'); b.classList.remove('bosspulse'); void b.offsetWidth; b.classList.add('bosspulse'); }
     else if (e.e === 'cast' && e.pid === G.myId) { const el = slotEls[e.slot]; if (el) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 150); } }
   }
 }
@@ -314,11 +333,49 @@ function syncViews(st, dt) {
   });
   for (const e of st.enemies) {
     const key = 'e' + e.id; seen.add(key); let v = G.views.get(key);
-    if (!v) { v = new UnitView(atlas, G.scene, e.ty, UNIT_H[e.ty], false); G.views.set(key, v); }
-    v.update(e, G.simT, dt, ENEMIES[e.ty].fly ? Math.max(0, A.heightAt(e.x, e.z)) : A.heightAt(e.x, e.z), { fly: ENEMIES[e.ty].fly, stun: e.st });
+    if (!v) { v = viewPool[e.ty]?.pop(); if (v) v.reuse(); else v = new UnitView(atlas, G.scene, e.ty, UNIT_H[e.ty], false, { noShadow: true }); G.views.set(key, v); }
+    v.update(e, G.simT, dt, ENEMIES[e.ty].fly ? Math.max(0, A.heightAt(e.x, e.z)) : A.heightAt(e.x, e.z), { fly: ENEMIES[e.ty].fly, stun: e.st, elite: e.el });
+    if (e.a !== 'death' || G.simT - e.at < 0.9) shadowInst(v.shadow.position, UNIT_H[e.ty] * 0.22 * v.shadow.scale.x * (e.el ? 1.22 : 1));
   }
-  for (const [k, v] of G.views) if (!seen.has(k)) { v.dispose(); G.views.delete(k); }
+  shadowFlush();
+  // enemy sprites are pooled per type instead of disposed: horde waves churn through hundreds of units
+  for (const [k, v] of G.views) if (!seen.has(k)) { G.views.delete(k);
+    if (k[0] === 'e' && !v.isPlayer) { const L = (viewPool[v.unit] ||= []); if (L.length < HORDE.cap + 10) { v.hide(); L.push(v); continue; } }
+    v.dispose(); }
+  syncPickups(st.pickups || [], G.simT);
   G.fx.syncProjectiles(st.projs, G.simT); G.fx.syncZones(st.zones, G.simT);
+}
+const viewPool = {}, pickupViews = new Map(), pickupMats = {};
+// one InstancedMesh for every enemy's ground shadow (horde: up to 70 units -> 1 draw call)
+let shadowBatch = null, shadowN = 0; const shM = new THREE.Matrix4(), shQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2), shS = new THREE.Vector3();
+function shadowInst(pos, r) {
+  if (!shadowBatch || shadowBatch.parent !== G.scene) {
+    shadowBatch = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 20), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false, map: softTex() }), 160);
+    shadowBatch.frustumCulled = false; G.scene.add(shadowBatch); shadowN = 0;
+  }
+  if (shadowN >= 160) return; shS.set(r, r, r); shM.compose(pos, shQ, shS); shadowBatch.setMatrixAt(shadowN++, shM);
+}
+function shadowFlush() { if (!shadowBatch) return; shadowBatch.count = shadowN; shadowBatch.instanceMatrix.needsUpdate = true; shadowN = 0; }
+function pickupMat(k) {
+  if (pickupMats[k]) return pickupMats[k];
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  const col = k === 'health' ? ['#fff1f1', '#ff3040', '#7a0610'] : ['#f0ffff', '#5ff0e0', '#0b4a52'];
+  const gr = g.createRadialGradient(32, 32, 2, 32, 32, 30); gr.addColorStop(0, col[0]); gr.addColorStop(0.35, col[1]); gr.addColorStop(0.75, col[2]); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = gr; g.beginPath(); g.arc(32, 32, 30, 0, 7); g.fill();
+  g.fillStyle = 'rgba(255,255,255,.9)'; if (k === 'health') { g.fillRect(28, 18, 8, 28); g.fillRect(18, 28, 28, 8); } else { g.beginPath(); g.moveTo(32, 16); g.lineTo(42, 32); g.lineTo(32, 48); g.lineTo(22, 32); g.fill(); }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return (pickupMats[k] = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
+}
+function syncPickups(list, simT) {
+  const seen = new Set();
+  for (const q of list) {
+    seen.add(q.id); let v = pickupViews.get(q.id);
+    if (!v) { const sp = new THREE.Sprite(pickupMat(q.k)); sp.renderOrder = 6; G.scene.add(sp); v = { sp }; pickupViews.set(q.id, v); }
+    const age = simT - q.t0, blink = age > HORDE.pickupLife - 4 && Math.floor(age * 6) % 2 === 0;
+    v.sp.visible = !blink; const s = 0.95 + Math.sin(simT * 5 + q.id) * 0.1; v.sp.scale.set(s, s, 1);
+    v.sp.position.set(q.x, ARENAS[G.arena].heightAt(q.x, q.z) + 0.75 + Math.sin(simT * 3 + q.id) * 0.15, q.z);
+  }
+  for (const [id, v] of pickupViews) if (!seen.has(id)) { G.scene.remove(v.sp); pickupViews.delete(id); }
 }
 const posOf = id => { const p = G.state && G.state.players.find(p => p.id === id); return p; };
 
@@ -411,6 +468,9 @@ function onNet(m) {
     if (host && params.get('arena') && !G._arenaSent && m.state === 'lobby') { G._arenaSent = true; if (m.arena !== params.get('arena')) { net.send({ t: 'arena', arena: params.get('arena') }); return; } }
     chosenArena = m.arena; buildArenaCards($('#lobby-arena'), id => net.send({ t: 'arena', arena: id }), host);
     $('#lobby-arena').insertAdjacentHTML('afterbegin', `<h2>Arena ${host ? '(you pick)' : '(host picks)'}</h2>`);
+    const lm = $('#lobby-mode'); lm.innerHTML = `<h2>Mode ${host ? '(you pick)' : '(host picks)'}</h2><div class="row">${[['arena', 'Arena (4 waves + Archon)'], ['horde', 'Hell Horde (endless)']].map(([id, t]) => `<button data-mode="${id}" class="${(m.mode || 'arena') === id ? 'sel' : ''}" ${host ? '' : 'disabled'}>${t}</button>`).join('')}</div>`;
+    if (host) lm.querySelectorAll('button').forEach(b => b.onclick = () => net.send({ t: 'mode', mode: b.dataset.mode }));
+    if (host && params.get('mode') && !G._modeSent && m.state === 'lobby') { G._modeSent = true; if ((m.mode || 'arena') !== params.get('mode')) net.send({ t: 'mode', mode: params.get('mode') }); }
     $('#start').classList.toggle('hidden', !host); $('#start').disabled = !m.players.filter(p => p.connected).every(p => p.ready);
     const me = m.players.find(p => p.id === net.id); $('#ready').textContent = me && me.ready ? 'Not ready' : 'Ready';
     if (m.state === 'lobby' && G.mode === 'coop') { clearScene(); G.mode = 'menu'; $('#hud').classList.add('hidden'); $('#touch').classList.add('hidden'); $('#end').classList.add('hidden'); $('#lobby').classList.remove('hidden'); }
@@ -418,7 +478,7 @@ function onNet(m) {
     const need = +params.get('autostart_players') || 0;
     if (host && need && m.state === 'lobby' && m.players.filter(p => p.connected && p.ready).length >= need) net.send({ t: 'start' });
   } else if (m.t === 'start') {
-    if (G.mode !== 'coop' || G.arena !== m.arena) startGame(m.arena, 'coop').then(() => { G.myId = net.id; });
+    if (G.mode !== 'coop' || G.arena !== m.arena || G.gm !== (m.mode || 'arena')) startGame(m.arena, 'coop', m.mode).then(() => { G.myId = net.id; });
   } else if (m.t === 'snap') {
     if (G.mode !== 'coop') return;
     G.snaps.push({ rt: performance.now(), s: m.s }); if (G.snaps.length > 40) G.snaps.shift();
@@ -428,3 +488,4 @@ function onNet(m) {
 
 // ------------------------------------------------------------------ auto-start for testing (?autostart=solo)
 if (params.get('autostart') === 'solo') startGame(chosenArena, 'solo');
+if (params.get('autostart') === 'horde') startGame(chosenArena, 'solo', 'horde');

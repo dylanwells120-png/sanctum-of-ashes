@@ -54,8 +54,32 @@ export const WAVES = [
   { archon: 1, gravewalker: 4 },
 ];
 
+// ---------------------------------------------------------------- Hell Horde (endless survival)
+export const HORDE = { cap: 70, breather: 6, bossEvery: 5, maxPickups: 30, pickupLife: 18 };
+export const GAME_MODES = { arena: 'Arena', horde: 'Hell Horde' };
+// wave w composition + scaling (n = active players). Pure so it can be unit-tested.
+export function hordeWave(w, n = 1) {
+  const co = 1 + 0.6 * (n - 1);
+  const boss = w % HORDE.bossEvery === 0;
+  const hpMul = 1 + 0.13 * (w - 1) + 0.004 * (w - 1) ** 2;
+  const spdMul = Math.min(1.5, 1 + 0.03 * (w - 1));
+  const dmgMul = 1 + 0.06 * (w - 1);
+  const eliteP = w < 3 ? 0 : Math.min(0.3, 0.035 * (w - 2));
+  const total = Math.round((14 + 5 * w) * co * (boss ? 0.55 : 1));
+  const ogres = Math.min(8, boss ? Math.floor(w / 10) : (w % 3 === 0 ? 1 + Math.floor(w / 4) : w >= 7 ? Math.floor(w / 7) : 0));
+  const gargFrac = w < 2 ? 0 : Math.min(0.45, 0.12 + 0.03 * w);
+  const list = [];
+  const swarm = Math.max(0, total - ogres);
+  for (let i = 0; i < swarm; i++) list.push({ type: Math.random() < gargFrac ? 'gargoyle' : 'gravewalker', elite: Math.random() < eliteP });
+  for (let i = 0; i < ogres; i++) list.push({ type: 'ogre', elite: w >= 12 && Math.random() < eliteP });
+  list.sort(() => Math.random() - 0.5);
+  if (boss) list.unshift({ type: 'archon', boss: true, bossN: w / HORDE.bossEvery });
+  return { list, hpMul, spdMul, dmgMul, boss, gap: Math.max(0.12, 0.3 - w * 0.008) };
+}
+
 export class Sim {
-  constructor(arena = 'ossuary') {
+  constructor(arena = 'ossuary', opts = {}) {
+    this.mode = opts.mode === 'horde' ? 'horde' : 'arena'; this.pickups = new Map(); this.kills = 0; this.alive = 0; this._bCache = null;
     this.arena = arena; this.A = ARENAS[arena]; this.t = 0; this.nextId = 1;
     this.players = new Map(); this.enemies = new Map(); this.projs = new Map(); this.zones = new Map();
     this.nav = (this.A.nav || []).map(([x, z]) => ({ x, z }));
@@ -100,7 +124,10 @@ export class Sim {
   steer(e, tx, tz) { // returns point to walk toward (direct or via nav graph)
     if (!this.nav.length || this.los(e.x, e.z, tx, tz)) return [tx, tz];
     const N = this.nav; let best = null, bv = 1e9;
-    const B = N.map(w => this.los(w.x, w.z, tx, tz) ? Math.hypot(w.x - tx, w.z - tz) : 1e9);
+    // per-target cache: with a 70-strong horde, many enemies steer toward the same player each tick
+    let B; const C = this._bCache;
+    if (C && C.t === this.t && C.tx === tx && C.tz === tz) B = C.B;
+    else { B = N.map(w => this.los(w.x, w.z, tx, tz) ? Math.hypot(w.x - tx, w.z - tz) : 1e9); this._bCache = { t: this.t, tx, tz, B }; }
     for (let a = 0; a < N.length; a++) {
       const da = Math.hypot(N[a].x - e.x, N[a].z - e.z); if (da < 0.6 || da + 0 > bv) continue;
       if (!this.los(e.x, e.z, N[a].x, N[a].z)) continue;
@@ -118,11 +145,14 @@ export class Sim {
     this.spawnTick(dt);
     for (const p of this.players.values()) this.stepPlayer(p, dt);
     for (const e of this.enemies.values()) this.stepEnemy(e, dt);
-    this.stepProjs(dt); this.stepZones(dt);
+    this.stepProjs(dt); this.stepZones(dt); if (this.pickups.size) this.stepPickups(dt);
     // cleanup dead enemies after death anim
     for (const [id, e] of this.enemies) if (e.dead && this.t - e.deadT > 1.2) this.enemies.delete(id);
     if (this.state === 'fight' && this.spawnQueue.length === 0 && ![...this.enemies.values()].some(e => !e.dead)) {
-      if (this.wave >= WAVES.length) { this.state = 'victory'; this.ev({ e: 'msg', text: 'The Archon falls. Victory!' }); }
+      if (this.mode === 'horde') { this.state = 'between'; this.stateT = HORDE.breather;
+        this.ev({ e: 'msg', text: `Wave ${this.wave} cleared \u2014 the horde regroups` });
+        for (const p of this.players.values()) { if (p.downed) { p.downed = false; p.hp = p.maxHp * 0.4; this.setAnim(p, 'idle'); } p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.15); p.mana = Math.min(p.maxMana, p.mana + p.maxMana * 0.3); } }
+      else if (this.wave >= WAVES.length) { this.state = 'victory'; this.ev({ e: 'msg', text: 'The Archon falls. Victory!' }); }
       else { this.state = 'between'; this.stateT = 4; this.ev({ e: 'msg', text: `Wave ${this.wave} cleared` });
         for (const p of this.players.values()) { if (p.downed) { p.downed = false; p.hp = p.maxHp * 0.4; this.setAnim(p, 'idle'); } p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.25); } }
     }
@@ -130,6 +160,7 @@ export class Sim {
     if (this.state === 'fight' && active.length && active.every(p => p.downed)) { this.state = 'defeat'; this.ev({ e: 'msg', text: 'All pilgrims have fallen' }); }
   }
   nextWave() {
+    if (this.mode === 'horde') return this.nextHordeWave();
     const W = WAVES[this.wave]; this.wave++; this.state = 'fight';
     const n = Math.max(1, [...this.players.values()].filter(p => !p.away).length);
     const list = [];
@@ -140,16 +171,65 @@ export class Sim {
     this.ev({ e: 'wave', n: this.wave, boss: !!W.archon });
     this.ev({ e: 'msg', text: W.archon ? 'The Abyssal Archon descends!' : `Wave ${this.wave}` });
   }
+  nextHordeWave() {
+    this.wave++; this.state = 'fight';
+    const n = Math.max(1, [...this.players.values()].filter(p => !p.away).length);
+    const W = hordeWave(this.wave, n); this.hordeMods = W;
+    // bursts: packs of 5 pour in together from the edges, packs get closer together as waves climb
+    let t = this.t + 0.6;
+    this.spawnQueue = W.list.map((s, i) => { if (i && i % 5 === 0) t += W.gap * 6; else if (i) t += W.gap; return { ...s, at: t }; });
+    this.ev({ e: 'wave', n: this.wave, boss: W.boss });
+    this.ev({ e: 'msg', text: W.boss ? `Wave ${this.wave} \u2014 The Abyssal Archon descends!` : `Wave ${this.wave} \u2014 ${W.list.length} damned approach` });
+  }
+  // random walkable point on the arena rim, away from players (horde mode)
+  edgeSpawn(T) {
+    const R = this.A.radius, P = this.livingPlayers();
+    for (let k = 0; k < 10; k++) {
+      const a = Math.random() * TAU, r = R * (0.8 + Math.random() * 0.14), x = Math.cos(a) * r, z = Math.sin(a) * r;
+      if (P.some(p => Math.hypot(p.x - x, p.z - z) < 8)) continue;
+      if (T.fly) return [x, z];
+      if (this.blocked(x, z, T.r)) continue;
+      if (this.nav.length ? this.nav.some(w => this.los(x, z, w.x, w.z)) : this.los(x, z, 0, 0)) return [x, z];
+    }
+    return null;
+  }
   spawnTick() {
+    const horde = this.mode === 'horde';
+    if (horde) { let a = 0; for (const e of this.enemies.values()) if (!e.dead) a++; this.alive = a; }
     while (this.spawnQueue.length && this.spawnQueue[0].at <= this.t) {
-      const { type } = this.spawnQueue.shift(); const sp = this.A.spawns[Math.floor(Math.random() * this.A.spawns.length)];
+      if (horde && this.alive >= HORDE.cap) { for (const q of this.spawnQueue) q.at += 0.5; break; } // spawn queue: wait for room
+      const q = this.spawnQueue.shift(); const { type } = q; const sp = this.A.spawns[Math.floor(Math.random() * this.A.spawns.length)];
       const T = ENEMIES[type]; const n = Math.max(1, [...this.players.values()].filter(p => !p.away).length);
-      const hp = T.hp * (1 + 0.45 * (n - 1));
+      let hp = T.hp * (1 + 0.45 * (n - 1));
       const jitter = () => (Math.random() - 0.5) * 2;
       const e = { id: this.id(), type, x: sp[0] + jitter(), z: sp[1] + jitter(), face: 0, hp, maxHp: hp, anim: 'walk', animT: this.t, cd: 1 + Math.random(),
-        wind: 0, kx: 0, kz: 0, stun: 0, root: 0, bleed: 0, bleedT: 0, dead: false, special: 6, summon: 12, phase: 1 };
+        wind: 0, kx: 0, kz: 0, stun: 0, root: 0, bleed: 0, bleedT: 0, dead: false, special: 6, summon: 12, phase: 1, spdMul: 1, dmgMul: 1, elite: false, navT: Math.random() * 0.4 };
+      if (horde) {
+        const M = this.hordeMods || { hpMul: 1, spdMul: 1, dmgMul: 1 };
+        const edge = !T.boss && Math.random() < 0.7 ? this.edgeSpawn(T) : null; if (edge) { e.x = edge[0]; e.z = edge[1]; }
+        hp *= T.boss ? (1 + 0.6 * ((q.bossN || 1) - 1)) : M.hpMul; e.spdMul = T.boss ? 1 : M.spdMul; e.dmgMul = T.boss ? 1 + 0.15 * ((q.bossN || 1) - 1) : M.dmgMul;
+        if (q.elite) { e.elite = true; hp *= 2.6; e.dmgMul *= 1.35; e.spdMul *= 1.12; }
+        e.hp = e.maxHp = hp; this.alive++;
+      }
       if (this.blocked(e.x, e.z, T.r)) { e.x = sp[0]; e.z = sp[1]; }
-      this.enemies.set(e.id, e); this.ev({ e: 'fx', k: 'shackle', x: e.x, z: e.z, s: T.boss ? 3 : 1.2, ground: 1, d: 0.8 });
+      this.enemies.set(e.id, e); this.ev({ e: 'fx', k: 'shackle', x: e.x, z: e.z, s: T.boss ? 3 : e.elite ? 1.8 : 1.2, ground: 1, d: 0.8 });
+    }
+  }
+  // ------------------------------------------------------------ pickups (horde): crimson = health, soul = mana
+  dropPickup(k, x, z) {
+    if (this.pickups.size >= HORDE.maxPickups) return;
+    const id = this.id(); this.pickups.set(id, { id, k, x: x + (Math.random() - 0.5) * 1.2, z: z + (Math.random() - 0.5) * 1.2, t0: this.t });
+  }
+  stepPickups() {
+    for (const [id, q] of this.pickups) {
+      if (this.t - q.t0 > HORDE.pickupLife) { this.pickups.delete(id); continue; }
+      for (const p of this.livingPlayers()) {
+        if ((p.x - q.x) ** 2 + (p.z - q.z) ** 2 > 1.6 * 1.6) continue;
+        if (q.k === 'health') { const v = p.maxHp * 0.2; p.hp = Math.min(p.maxHp, p.hp + v); this.ev({ e: 'dmg', x: p.x, z: p.z, v: '+' + Math.round(v), tgt: 'h', h: 2.2 }); }
+        else { const v = p.maxMana * 0.4; p.mana = Math.min(p.maxMana, p.mana + v); for (let i = 1; i < 4; i++) p.cds[i] = Math.max(0, p.cds[i] - 1); this.ev({ e: 'dmg', x: p.x, z: p.z, v: '+' + Math.round(v), tgt: 'm', h: 2.2 }); }
+        this.ev({ e: 'fx', k: q.k === 'health' ? 'nova' : 'maelstrom', x: q.x, z: q.z, s: 1.6, d: 0.35 }); this.ev({ e: 'pickup', k: q.k, pid: p.id });
+        this.pickups.delete(id); break;
+      }
     }
   }
   livingPlayers() { return [...this.players.values()].filter(p => !p.downed && !p.away); }
@@ -279,7 +359,7 @@ export class Sim {
         for (const p of this.players.values()) if (Math.hypot(p.x - z.x, p.z - z.z) < z.r) p.buffs.aegis = 0.2;
       } else if (z.kind === 'boss_nova') {
         if (!z.fired && age > 1.3) { z.fired = true; this.ev({ e: 'fx', k: 'nova', x: z.x, z: z.z, s: z.r * 2.1, ground: 1, d: 0.7 });
-          for (const p of this.livingPlayers()) if (Math.hypot(p.x - z.x, p.z - z.z) < z.r) this.hurtPlayer(p, 52); }
+          for (const p of this.livingPlayers()) if (Math.hypot(p.x - z.x, p.z - z.z) < z.r) this.hurtPlayer(p, z.dmg || 52); }
       } else {
         for (const e of this.enemies.values()) {
           if (e.dead) continue; const dx = z.x - e.x, dz = z.z - e.z, d = Math.hypot(dx, dz);
@@ -300,8 +380,13 @@ export class Sim {
     if (e.hp <= 0) this.killEnemy(e, src);
   }
   killEnemy(e, src) {
-    e.dead = true; e.deadT = this.t; e.hp = 0; this.setAnim(e, 'death'); if (src) src.kills = (src.kills || 0) + 1;
-    this.ev({ e: 'die', id: e.id, type: e.type, x: e.x, z: e.z });
+    e.dead = true; e.deadT = this.t; e.hp = 0; this.setAnim(e, 'death'); if (src) src.kills = (src.kills || 0) + 1; this.kills++;
+    this.ev({ e: 'die', id: e.id, type: e.type, x: e.x, z: e.z, el: e.elite ? 1 : 0 });
+    if (this.mode === 'horde') {
+      if (ENEMIES[e.type].boss) { for (let i = 0; i < 6; i++) this.dropPickup(i % 2 ? 'soul' : 'health', e.x, e.z); }
+      else { const ch = e.type === 'ogre' ? 0.75 : (e.elite ? 0.4 : e.type === 'gargoyle' ? 0.08 : 0.06);
+        if (Math.random() < ch) this.dropPickup(Math.random() < 0.55 ? 'health' : 'soul', e.x, e.z); }
+    }
     if (ENEMIES[e.type].boss) { this.spawnQueue = []; for (const o of this.enemies.values()) if (!o.dead) { o.dead = true; o.deadT = this.t; this.setAnim(o, 'death'); } }
   }
   hurtPlayer(p, dmg, quiet = false) {
@@ -339,7 +424,7 @@ export class Sim {
         }
         if (T.smash) this.ev({ e: 'fx', k: 'nova', x: e.x + Math.cos(e.face), z: e.z + Math.sin(e.face), s: T.smash * 2, ground: 1, d: 0.5 });
         if (T.boss) this.ev({ e: 'fx', k: 'cleave', x: e.x + Math.cos(e.face) * 2.2, z: e.z + Math.sin(e.face) * 2.2, r: e.face, s: 7, ground: 1, d: 0.5 });
-        for (const p of hits) this.hurtPlayer(p, T.dmg * (e.phase === 2 ? 1.25 : 1));
+        for (const p of hits) this.hurtPlayer(p, T.dmg * (e.dmgMul || 1) * (e.phase === 2 ? 1.25 : 1));
       }
       return;
     }
@@ -353,7 +438,11 @@ export class Sim {
       const [gx, gz] = T.fly ? [tgt.x, tgt.z] : e.goal; const gd = Math.hypot(gx - e.x, gz - e.z) || 1;
       let vx = (gx - e.x) / gd, vz = (gz - e.z) / gd;
       for (const o of this.enemies.values()) { if (o === e || o.dead) continue; const ox = e.x - o.x, oz = e.z - o.z, od = Math.hypot(ox, oz), rr = T.r + ENEMIES[o.type].r; if (od < rr && od > 0.001) { vx += ox / od * 0.9; vz += oz / od * 0.9; } }
-      const m = Math.hypot(vx, vz) || 1; const sp = T.speed * hz.slow * (e.phase === 2 ? 1.25 : 1);
+      if (!T.fly) for (const o of this.A.obstacles) { // slide around braziers / bone piles instead of grinding into them
+        const ox = e.x - o.x, oz = e.z - o.z, od = Math.hypot(ox, oz), rr = o.r + T.r + 0.9;
+        if (od < rr && od > 0.001) { const nx = ox / od, nz = oz / od; let tx = -nz, tz = nx; if (tx * vx + tz * vz < 0) { tx = -tx; tz = -tz; }
+          const w = (rr - od) / rr * 2.2; vx += (nx * 0.4 + tx) * w; vz += (nz * 0.4 + tz) * w; } }
+      const m = Math.hypot(vx, vz) || 1; const sp = T.speed * (e.spdMul || 1) * hz.slow * (e.phase === 2 ? 1.25 : 1);
       this.tryMove(e, vx / m * sp * dt, vz / m * sp * dt, T.r * 0.7, !!T.fly && Math.hypot(e.x + vx, e.z + vz) < this.A.radius);
       if (e.anim !== 'hit' || this.t - e.animT > 0.25) this.setAnim(e, 'walk');
     } else if (e.anim !== 'attack' || this.t - e.animT > 0.6) this.setAnim(e, 'idle');
@@ -363,8 +452,8 @@ export class Sim {
     e.special -= dt; e.summon -= dt;
     if (e.special <= 0 && tgt) {
       e.special = e.phase === 2 ? 6 : 9;
-      const zid = this.id(); this.zones.set(zid, { id: zid, kind: 'boss_nova', x: tgt.x, z: tgt.z, r: 4.5, t0: this.t, life: 1.6, s: {} });
-      if (e.phase === 2) { const z2 = this.id(); this.zones.set(z2, { id: z2, kind: 'boss_nova', x: e.x, z: e.z, r: 6.5, t0: this.t, life: 1.6, s: {} }); }
+      const zid = this.id(); this.zones.set(zid, { id: zid, kind: 'boss_nova', x: tgt.x, z: tgt.z, r: 4.5, t0: this.t, life: 1.6, s: {}, dmg: 52 * (e.dmgMul || 1) });
+      if (e.phase === 2) { const z2 = this.id(); this.zones.set(z2, { id: z2, kind: 'boss_nova', x: e.x, z: e.z, r: 6.5, t0: this.t, life: 1.6, s: {}, dmg: 52 * (e.dmgMul || 1) }); }
     }
     if (e.summon <= 0) { e.summon = e.phase === 2 ? 11 : 16; for (let i = 0; i < 3; i++) this.spawnQueue.push({ type: 'gravewalker', at: this.t + i * 0.3 }); this.ev({ e: 'msg', text: 'The Archon summons the Gravewalkers' }); }
   }
@@ -373,10 +462,12 @@ export class Sim {
   snapshot() {
     const r = v => Math.round(v * 100) / 100;
     return {
-      t: r(this.t), arena: this.arena, wave: this.wave, waves: WAVES.length, state: this.state, stateT: r(this.stateT),
+      t: r(this.t), arena: this.arena, mode: this.mode, wave: this.wave, waves: this.mode === 'horde' ? 0 : WAVES.length, state: this.state, stateT: r(this.stateT),
+      kills: this.kills, left: this.spawnQueue.length + [...this.enemies.values()].filter(e => !e.dead).length,
       players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, cls: p.cls, x: r(p.x), z: r(p.z), f: r(p.face), a: p.anim, at: r(p.animT),
         hp: Math.round(p.hp), mhp: p.maxHp, mp: Math.round(p.mana), mmp: p.maxMana, cds: p.cds.map(r), dn: p.downed ? 1 : 0, rv: r(p.revive), b: Object.keys(p.buffs), away: p.away ? 1 : 0, k: p.kills })),
-      enemies: [...this.enemies.values()].map(e => ({ id: e.id, ty: e.type, x: r(e.x), z: r(e.z), f: r(e.face), a: e.anim, at: r(e.animT), hp: Math.round(e.hp), mhp: Math.round(e.maxHp), st: e.stun > 0 ? 1 : 0, ph: e.phase })),
+      enemies: [...this.enemies.values()].map(e => ({ id: e.id, ty: e.type, x: r(e.x), z: r(e.z), f: r(e.face), a: e.anim, at: r(e.animT), hp: Math.round(e.hp), mhp: Math.round(e.maxHp), st: e.stun > 0 ? 1 : 0, ph: e.phase, ...(e.elite ? { el: 1 } : {}) })),
+      pickups: [...this.pickups.values()].map(q => ({ id: q.id, k: q.k, x: r(q.x), z: r(q.z), t0: r(q.t0) })),
       projs: [...this.projs.values()].map(q => ({ id: q.id, k: q.kind, x: r(q.x), z: r(q.z), f: r(Math.atan2(q.vz, q.vx)) })),
       zones: [...this.zones.values()].map(z => ({ id: z.id, k: z.kind, x: r(z.x), z: r(z.z), r: z.r, t0: r(z.t0), l: z.life, armed: z.armed ? 1 : 0 })),
     };
