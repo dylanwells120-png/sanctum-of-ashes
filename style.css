@@ -138,3 +138,18 @@ html, body { width:100%; height:100%; height:100dvh; max-height:100dvh; }
 @media (orientation:portrait) and (max-width:1100px) { #fs-btn-hud { top:calc(180px + var(--safe-t)); } }
 body.standalone .fs-btn { display:none !important; }
 #stick-zone { left:var(--safe-l); bottom:var(--safe-b); }
+
+/* ---------------- Hell Horde */
+button.hell { background:linear-gradient(#8a1a06,#3a0402); border-color:#ff6a1a; color:#ffe2c0; text-shadow:0 0 6px #ff4a00; box-shadow:0 0 14px rgba(255,80,0,.35); }
+#horde-stats { display:flex; gap:14px; justify-content:center; margin-top:4px; font-size:13px; letter-spacing:.08em; color:#e8d8c0; text-shadow:0 1px 3px #000; white-space:nowrap; }
+#horde-stats.hidden { display:none; }
+#horde-stats b { color:#ffb347; font-size:15px; }
+#horde-stats .bosswarn { color:#ff6a1a; font-weight:bold; animation:bosswarn 1s infinite alternate; }
+@keyframes bosswarn { from { opacity:.5 } to { opacity:1 } }
+body.horde #wave-label { color:#ffcfa0; text-shadow:0 0 8px #ff3a00, 0 2px 4px #000; }
+#wave.bosspulse #wave-label { animation:bosspulse 1.4s ease-out; }
+@keyframes bosspulse { 0% { transform:scale(1.6); color:#ff5a00; } 100% { transform:scale(1); } }
+.dmg.h { color:#ff6b78; }
+.dmg.m { color:#7ff6ea; }
+#lobby-mode button.sel { border-color:#ffb347; box-shadow:0 0 10px rgba(255,140,0,.5); }
+@media (max-width: 700px) { #horde-stats { font-size:11px; gap:9px; } #horde-stats b { font-size:13px; } }

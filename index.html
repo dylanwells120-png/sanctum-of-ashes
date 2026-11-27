@@ -21,7 +21,7 @@
 
 <div id="hud" class="hidden">
   <div id="party"></div>
-  <div id="wave"><div id="wave-label"></div><div id="boss" class="hidden"><div id="boss-name">The Abyssal Archon</div><div id="boss-bar"><div id="boss-fill"></div></div></div></div>
+  <div id="wave"><div id="wave-label"></div><div id="horde-stats" class="hidden"></div><div id="boss" class="hidden"><div id="boss-name">The Abyssal Archon</div><div id="boss-bar"><div id="boss-fill"></div></div></div></div>
   <div id="minimap-wrap"><canvas id="minimap" width="180" height="180"></canvas><div id="mm-n">N</div></div>
   <div id="toasts"></div>
   <div id="bottom">
@@ -52,6 +52,7 @@
     <div id="arenas" class="cards arenas"></div>
     <div class="row">
       <button id="solo" class="big">Play Solo</button>
+      <button id="horde" class="big hell" title="Endless escalating waves">Hell Horde</button>
       <button id="fs-btn-menu" class="fs-btn" type="button">Full screen</button>
       <button id="settings-btn">Settings</button>
     </div>
@@ -64,6 +65,7 @@
     <h2>Co-op lobby</h2>
     <p class="note" id="lobby-url"></p>
     <ul id="lobby-players"></ul>
+    <div id="lobby-mode"></div>
     <div id="lobby-arena"></div>
     <div class="row"><button id="ready" class="big">Ready</button><button id="start" class="big alt">Start</button><button id="lobby-leave">Leave</button></div>
     <p class="note" id="lobby-hint">Everyone picks a class on the main card list, then presses Ready. The host chooses the arena and starts.</p>
